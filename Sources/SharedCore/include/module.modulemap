@@ -1,0 +1,4 @@
+module CParquetReader {
+    header "ParquetReader.h"
+    export *
+}

@@ -1,0 +1,105 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Xcode
+build/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+*.xcscheme
+*.playground
+timeline.xctimeline
+.build/
+
+# Swift Package Manager
+Packages/
+Package.pins
+Package.resolved
+.swiftpm/
+*.xcodeproj
+
+# Build artifacts
+ParqView.dmg
+ParqView.zip
+*.app
+*.icns
+!Resources/AppIcon.icns
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test data
+*.parquet
+*.parq
+!Tests/TestData/*.parquet
+!Tests/TestData/*.parq
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+temp_*
+icon_formatted.png
+icon.png
+temp_rgba.png
+
+# Distribution
+dist/
+release/
+
+# CI/CD artifacts
+artifacts/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Don't ignore important config files
+!.github/
+!.gitignore
+!Info.plist
+!Entitlements.plist

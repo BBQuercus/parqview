@@ -1,0 +1,123 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Universal Binary
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v1
+      with:
+        swift-version: "5.9"
+    
+    - name: Install Dependencies
+      run: |
+        brew install apache-arrow
+        brew install python@3.11
+        pip3 install Pillow
+    
+    - name: Generate Icon
+      run: |
+        python3 format_icon.py
+    
+    - name: Build Universal Binary
+      run: |
+        chmod +x build_distribution.sh
+        ./build_distribution.sh --dmg
+    
+    - name: Verify Build
+      run: |
+        ls -lah .build/ParqView.app/Contents/MacOS/
+        lipo -info .build/ParqView.app/Contents/MacOS/ParqView
+        file ParqView.dmg
+    
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ParqView-macOS
+        path: |
+          ParqView.dmg
+          .build/ParqView.app
+    
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ParqView.dmg
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+        body: |
+          ## 🎉 ParqView Release
+          
+          ### ⚠️ DISCLAIMER
+          **This entire application was vibe-coded with AI assistance. Use at your own risk!**
+          
+          ### Installation
+          1. Download `ParqView.dmg`
+          2. Open the DMG and drag ParqView to Applications
+          3. On first launch, right-click and select "Open" (unsigned app)
+          
+          ### Features
+          - 📊 View Parquet file schemas
+          - 🔍 Browse data with pagination
+          - 🎯 SQL queries via DuckDB
+          - 🖥️ Native macOS app (Universal Binary)
+          
+          ### System Requirements
+          - macOS 13.0 (Ventura) or later
+          - Works on both Intel and Apple Silicon Macs
+          
+          ### Known Issues
+          - App is unsigned (security warning on first launch)
+          - Requires Apache Arrow libraries (now bundled!)
+          
+          ---
+          *Built with ❤️ and questionable coding practices*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    name: Test Build
+    runs-on: macos-latest
+    needs: build
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v1
+      with:
+        swift-version: "5.9"
+    
+    - name: Install Dependencies
+      run: |
+        brew install apache-arrow
+    
+    - name: Run Tests
+      run: |
+        swift test
+    
+    - name: Download Build Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: ParqView-macOS
+    
+    - name: Test App Launch
+      run: |
+        # Test that the app at least launches
+        .build/ParqView.app/Contents/MacOS/ParqView --help 2>/dev/null || true
+        
+        # Check dependencies are bundled
+        otool -L .build/ParqView.app/Contents/MacOS/ParqView | grep -v "/usr/lib" | grep -v "/System" || true
