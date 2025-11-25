@@ -73,6 +73,31 @@ public enum ParquetType: String, Codable, CustomStringConvertible {
         case .fixedLenByteArray: return "Fixed Byte Array"
         }
     }
+
+    /// Short type description for compact display
+    public var shortDescription: String {
+        switch self {
+        case .boolean: return "bool"
+        case .int32: return "i32"
+        case .int64: return "i64"
+        case .int96: return "i96"
+        case .float: return "f32"
+        case .double: return "f64"
+        case .string: return "str"
+        case .date: return "date"
+        case .timestamp: return "ts"
+        case .time: return "time"
+        case .decimal: return "dec"
+        case .uuid: return "uuid"
+        case .json: return "json"
+        case .binary: return "bin"
+        case .list: return "list"
+        case .map: return "map"
+        case .structure: return "struct"
+        case .byteArray: return "bytes"
+        case .fixedLenByteArray: return "fbytes"
+        }
+    }
 }
 
 // MARK: - Data Types

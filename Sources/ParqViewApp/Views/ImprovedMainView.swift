@@ -40,7 +40,7 @@ struct ImprovedMainView: View {
                             // Data table - Use optimized view for large files
                             if file.totalRows > 500 {
                                 // Use simple paginated view for large files
-                                SimpleVirtualTableView(file: file)
+                                SimpleVirtualTableView(file: file, filterText: filterText)
                             } else {
                                 // Use simple view for small files
                                 ImprovedTableView(
