@@ -108,9 +108,23 @@ struct HeaderToolbar: View {
     @Binding var isSearching: Bool
     let onBack: () -> Void
     @FocusState private var isFilterFocused: Bool
+    @State private var showFileInfo: Bool = false
 
     private var hasUnappliedChanges: Bool {
         filterText != activeFilter
+    }
+
+    private var fileSizeString: String {
+        let bytes = file.sizeInBytes
+        if bytes < 1024 {
+            return "\(bytes) B"
+        } else if bytes < 1024 * 1024 {
+            return String(format: "%.1f KB", Double(bytes) / 1024)
+        } else if bytes < 1024 * 1024 * 1024 {
+            return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
+        } else {
+            return String(format: "%.2f GB", Double(bytes) / (1024 * 1024 * 1024))
+        }
     }
 
     var body: some View {
@@ -179,9 +193,95 @@ struct HeaderToolbar: View {
                 }
             }
 
-            Text("\(file.totalRows) rows")
+            Text("\(ValueFormatters.formatNumber(file.totalRows)) rows")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            // File info button
+            Button(action: { showFileInfo = true }) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 14))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("File information (⌘I)")
+            .keyboardShortcut("i", modifiers: .command)
+            .popover(isPresented: $showFileInfo) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("File Information")
+                        .font(.headline)
+
+                    Divider()
+
+                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                        GridRow {
+                            Text("Name:")
+                                .foregroundStyle(.secondary)
+                            Text(file.name)
+                                .fontWeight(.medium)
+                        }
+                        GridRow {
+                            Text("Path:")
+                                .foregroundStyle(.secondary)
+                            Text(file.url.path)
+                                .font(.system(size: 11))
+                                .lineLimit(2)
+                                .frame(maxWidth: 300)
+                        }
+                        GridRow {
+                            Text("Size:")
+                                .foregroundStyle(.secondary)
+                            Text(fileSizeString)
+                        }
+                        GridRow {
+                            Text("Rows:")
+                                .foregroundStyle(.secondary)
+                            Text(ValueFormatters.formatNumber(file.totalRows))
+                        }
+                        GridRow {
+                            Text("Columns:")
+                                .foregroundStyle(.secondary)
+                            Text("\(file.schema.columns.count)")
+                        }
+                        if let metadata = file.metadata {
+                            GridRow {
+                                Text("Row Groups:")
+                                    .foregroundStyle(.secondary)
+                                Text("\(metadata.rowGroups)")
+                            }
+                            if let codec = metadata.compressionCodec {
+                                GridRow {
+                                    Text("Compression:")
+                                        .foregroundStyle(.secondary)
+                                    Text(codec)
+                                }
+                            }
+                            if let createdBy = metadata.createdBy, createdBy != "Unknown" {
+                                GridRow {
+                                    Text("Created By:")
+                                        .foregroundStyle(.secondary)
+                                    Text(createdBy)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    // Copy path button
+                    Button(action: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(file.url.path, forType: .string)
+                    }) {
+                        Label("Copy Path", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding()
+                .frame(minWidth: 300)
+            }
         }
         .padding()
         .background(Color(NSColor.windowBackgroundColor))

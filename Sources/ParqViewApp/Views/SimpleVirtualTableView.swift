@@ -16,6 +16,11 @@ struct SimpleVirtualTableView: View {
     @State private var columnWidths: [String: CGFloat] = [:]
     @State private var sortColumn: String? = nil
     @State private var sortAscending: Bool = true
+    @State private var selectedCell: (row: Int, col: String)? = nil
+    @State private var jumpToRowText: String = ""
+    @State private var showJumpPopover: Bool = false
+    @State private var showExportAlert: Bool = false
+    @State private var exportMessage: String = ""
     private let rowHeight: CGFloat = 24
     private let maxRowsForSorting = 100_000  // Limit sorting to avoid memory issues
     private let defaultColumnWidth: CGFloat = 120
@@ -207,9 +212,21 @@ struct SimpleVirtualTableView: View {
                                             ForEach(visibleColumns) { column in
                                                 if let colIndex = file.schema.columns.firstIndex(where: { $0.name == column.name }),
                                                    colIndex < row.values.count {
+                                                    let globalRowIndex = currentOffset + index
+                                                    let isSelected = selectedCell?.row == globalRowIndex && selectedCell?.col == column.name
+
                                                     cellView(for: row.values[colIndex])
                                                         .frame(width: columnWidth(for: column.name), height: rowHeight, alignment: .leading)
                                                         .padding(.horizontal, 6)
+                                                        .background(isSelected ? Color.accentColor.opacity(0.3) : Color.clear)
+                                                        .contentShape(Rectangle())
+                                                        .onTapGesture {
+                                                            selectedCell = (globalRowIndex, column.name)
+                                                        }
+                                                        .onTapGesture(count: 2) {
+                                                            // Double-click to copy
+                                                            copyValueToClipboard(row.values[colIndex])
+                                                        }
 
                                                     // Divider line matching header
                                                     Rectangle()
@@ -246,15 +263,14 @@ struct SimpleVirtualTableView: View {
             Divider()
 
             // Pagination controls
-            HStack {
+            HStack(spacing: 8) {
                 Button("Previous") {
                     loadPreviousPage()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(currentOffset == 0 || isLoading)
-
-                Spacer()
+                .keyboardShortcut(.leftArrow, modifiers: [.command])
 
                 let totalRows = filterText.isEmpty ? file.totalRows : filteredTotalRows
                 let endIndex = min(currentOffset + visibleRows.count, totalRows)
@@ -262,14 +278,70 @@ struct SimpleVirtualTableView: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
 
-                Spacer()
-
                 Button("Next") {
                     loadNextPage()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(currentOffset + rowsPerPage >= totalRows || isLoading)
+                .keyboardShortcut(.rightArrow, modifiers: [.command])
+
+                Divider()
+                    .frame(height: 16)
+
+                // Jump to row
+                Button(action: { showJumpPopover = true }) {
+                    Image(systemName: "arrow.right.to.line")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Jump to row (⌘G)")
+                .keyboardShortcut("g", modifiers: .command)
+                .popover(isPresented: $showJumpPopover) {
+                    VStack(spacing: 8) {
+                        Text("Jump to Row")
+                            .font(.headline)
+                        HStack {
+                            TextField("Row number", text: $jumpToRowText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 100)
+                                .onSubmit {
+                                    jumpToRow()
+                                }
+                            Button("Go") {
+                                jumpToRow()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        }
+                        Text("1 - \(totalRows)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                }
+
+                // Export to CSV
+                Button(action: { exportToCSV() }) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Export to CSV (⌘E)")
+                .keyboardShortcut("e", modifiers: .command)
+
+                // Copy selected cell
+                Button(action: { copySelectedCell() }) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(selectedCell == nil)
+                .help("Copy selected cell (⌘C)")
+                .keyboardShortcut("c", modifiers: .command)
 
                 if isLoading {
                     ProgressView()
@@ -280,6 +352,11 @@ struct SimpleVirtualTableView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Color(NSColor.controlBackgroundColor))
+            .alert("Export Complete", isPresented: $showExportAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(exportMessage)
+            }
         }
         .task(id: filterText) {
             // Reset offset when filter changes
@@ -347,6 +424,86 @@ struct SimpleVirtualTableView: View {
         currentOffset = 0
         Task {
             await loadPage(offset: 0)
+        }
+    }
+
+    /// Copy a value to clipboard
+    private func copyValueToClipboard(_ value: ParquetValue) {
+        let text = ValueFormatters.displayString(for: value)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Copy the currently selected cell
+    private func copySelectedCell() {
+        guard let cell = selectedCell else { return }
+        let localIndex = cell.row - currentOffset
+        guard localIndex >= 0 && localIndex < visibleRows.count else { return }
+
+        if let colIndex = file.schema.columns.firstIndex(where: { $0.name == cell.col }),
+           colIndex < visibleRows[localIndex].values.count {
+            copyValueToClipboard(visibleRows[localIndex].values[colIndex])
+        }
+    }
+
+    /// Jump to a specific row
+    private func jumpToRow() {
+        guard let rowNum = Int(jumpToRowText), rowNum >= 1 else {
+            showJumpPopover = false
+            return
+        }
+
+        let totalRows = filterText.isEmpty ? file.totalRows : filteredTotalRows
+        let targetRow = min(max(1, rowNum), totalRows)
+        let targetOffset = ((targetRow - 1) / rowsPerPage) * rowsPerPage
+
+        showJumpPopover = false
+        jumpToRowText = ""
+
+        Task {
+            await loadPage(offset: targetOffset)
+        }
+    }
+
+    /// Export visible data to CSV
+    private func exportToCSV() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "\(file.name.replacingOccurrences(of: ".parquet", with: "")).csv"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                var csv = ""
+
+                // Header row
+                let headers = visibleColumns.map { $0.name }
+                csv += headers.joined(separator: ",") + "\n"
+
+                // Data rows
+                for row in visibleRows {
+                    var rowValues: [String] = []
+                    for column in visibleColumns {
+                        if let colIndex = file.schema.columns.firstIndex(where: { $0.name == column.name }),
+                           colIndex < row.values.count {
+                            let value = ValueFormatters.displayString(for: row.values[colIndex])
+                            // Escape CSV values
+                            if value.contains(",") || value.contains("\"") || value.contains("\n") {
+                                rowValues.append("\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\"")
+                            } else {
+                                rowValues.append(value)
+                            }
+                        }
+                    }
+                    csv += rowValues.joined(separator: ",") + "\n"
+                }
+
+                try csv.write(to: url, atomically: true, encoding: .utf8)
+                exportMessage = "Exported \(visibleRows.count) rows to \(url.lastPathComponent)"
+                showExportAlert = true
+            } catch {
+                exportMessage = "Export failed: \(error.localizedDescription)"
+                showExportAlert = true
+            }
         }
     }
     
