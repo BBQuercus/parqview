@@ -13,9 +13,25 @@ A native macOS app for viewing Parquet files.
 Or grab development builds from [Actions](https://github.com/BBQuercus/parqview/actions) (click latest run > Artifacts).
 
 ### First Launch
-Since the app isn't code-signed, macOS will block it:
-1. Right-click the app > "Open"
-2. Click "Open" in the dialog
+Since the app isn't notarized with Apple, macOS will show a security warning. Use one of these methods:
+
+**Option 1: Right-click method**
+1. Right-click (or Control+click) on ParqView.app
+2. Select "Open" from the menu
+3. Click "Open" in the dialog
+
+**Option 2: System Settings**
+1. Try to open the app normally (it will be blocked)
+2. Go to **System Settings → Privacy & Security**
+3. Scroll down to find "ParqView was blocked"
+4. Click **"Open Anyway"**
+
+**Option 3: Terminal**
+```bash
+xattr -cr /Applications/ParqView.app
+```
+
+This is a one-time requirement. After opening it once, macOS will remember your choice.
 
 ## Features
 
@@ -49,7 +65,8 @@ open .build/ParqView.app
 ## Requirements
 
 - macOS 13.0 (Ventura) or later
-- Apple Silicon or Intel Mac
+- Apple Silicon Mac (ARM64) - Intel builds coming soon
+- Apache Arrow libraries: `brew install apache-arrow`
 
 ## License
 
