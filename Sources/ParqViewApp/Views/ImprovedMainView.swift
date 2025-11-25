@@ -9,52 +9,84 @@ struct ImprovedMainView: View {
     @State private var isSearching = false
 
     var body: some View {
-        Group {
-            if let file = appState.currentFile {
-                GeometryReader { geometry in
-                    HStack(spacing: 0) {
-                        // Schema sidebar
-                        SchemaSidebar(
-                            schema: file.schema,
-                            selectedColumns: $selectedColumns
-                        )
-                        .frame(width: 250)
-                        .background(Color(NSColor.controlBackgroundColor))
-
-                        Divider()
-
-                        // Main content area
-                        VStack(spacing: 0) {
-                            // Header toolbar
-                            HeaderToolbar(
-                                file: file,
-                                filterText: $filterText,
-                                activeFilter: $activeFilter,
-                                isSearching: $isSearching,
-                                onBack: {
-                                    appState.currentFile = nil
-                                }
+        ZStack {
+            Group {
+                if let file = appState.currentFile {
+                    GeometryReader { geometry in
+                        HStack(spacing: 0) {
+                            // Schema sidebar
+                            SchemaSidebar(
+                                schema: file.schema,
+                                selectedColumns: $selectedColumns
                             )
+                            .frame(width: 250)
+                            .background(Color(NSColor.controlBackgroundColor))
 
                             Divider()
 
-                            // Data table with pagination
-                            SimpleVirtualTableView(file: file, filterText: activeFilter, isSearching: $isSearching, selectedColumns: selectedColumns)
+                            // Main content area
+                            VStack(spacing: 0) {
+                                // Header toolbar
+                                HeaderToolbar(
+                                    file: file,
+                                    filterText: $filterText,
+                                    activeFilter: $activeFilter,
+                                    isSearching: $isSearching,
+                                    onBack: {
+                                        appState.currentFile = nil
+                                    }
+                                )
+
+                                Divider()
+
+                                // Data table with pagination
+                                SimpleVirtualTableView(file: file, filterText: activeFilter, isSearching: $isSearching, selectedColumns: selectedColumns)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                     }
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .id(file.id)  // Force complete view recreation when file changes
+                    .onAppear {
+                        // Always select all columns on appear
+                        selectedColumns = Set(file.schema.columns.map { $0.name })
+                    }
+                } else {
+                    WelcomeScreen()
                 }
-                .id(file.id)  // Force complete view recreation when file changes
-                .onAppear {
-                    // Always select all columns on appear
-                    selectedColumns = Set(file.schema.columns.map { $0.name })
+            }
+
+            // Loading overlay when opening a file
+            if appState.isLoading {
+                ZStack {
+                    Color(NSColor.windowBackgroundColor)
+                        .opacity(0.9)
+
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .progressViewStyle(CircularProgressViewStyle())
+
+                        Text("Loading file...")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+
+                        Text("Reading schema and metadata")
+                            .font(.caption)
+                            .foregroundColor(.secondary.opacity(0.8))
+                    }
+                    .padding(32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(NSColor.controlBackgroundColor))
+                            .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 4)
+                    )
                 }
-            } else {
-                WelcomeScreen()
+                .transition(.opacity)
             }
         }
         .frame(minWidth: 800, minHeight: 600)
+        .animation(.easeInOut(duration: 0.2), value: appState.isLoading)
         .onChange(of: appState.currentFile?.id) { _ in
             // Reset state when file changes
             filterText = ""
