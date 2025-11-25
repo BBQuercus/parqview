@@ -115,7 +115,7 @@ struct SimpleVirtualTableView: View {
 
                 let totalRows = filterText.isEmpty ? file.totalRows : filteredTotalRows
                 let endIndex = min(currentOffset + visibleRows.count, totalRows)
-                Text("Showing \(visibleRows.isEmpty ? 0 : currentOffset + 1)-\(endIndex) of \(formatNumber(totalRows))")
+                Text("Showing \(visibleRows.isEmpty ? 0 : currentOffset + 1)-\(endIndex) of \(ValueFormatters.formatNumber(totalRows))")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
 
@@ -148,60 +148,27 @@ struct SimpleVirtualTableView: View {
         }
     }
 
-    private func formatNumber(_ num: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.groupingSeparator = "'"
-        return formatter.string(from: NSNumber(value: num)) ?? "\(num)"
-    }
-    
     @ViewBuilder
     private func cellView(for value: ParquetValue) -> some View {
-        let displayText = getDisplayText(for: value)
-        let textColor = getTextColor(for: value)
+        let displayText = ValueFormatters.displayString(for: value)
+        let colorType = ValueFormatters.color(for: value)
 
         Text(displayText)
             .font(.system(size: 10))
-            .foregroundColor(textColor)
+            .foregroundColor(swiftUIColor(for: colorType))
             .lineLimit(1)
-            .help(displayText) // Tooltip
+            .help(displayText)
     }
-    
-    private func getDisplayText(for value: ParquetValue) -> String {
-        switch value {
-        case .null:
-            return "NULL"
-        case .bool(let b):
-            return b ? "true" : "false"
-        case .int(let i):
-            return "\(i)"
-        case .float(let f):
-            return String(format: "%.2f", f)
-        case .string(let s):
-            return s
-        case .binary(let data):
-            return "<\(data.count) bytes>"
-        case .date(let date):
-            return DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .none)
-        case .timestamp(let date):
-            return DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .medium)
-        }
-    }
-    
-    private func getTextColor(for value: ParquetValue) -> Color {
-        switch value {
-        case .null:
-            return .secondary
-        case .bool:
-            return .purple
-        case .int, .float:
-            return .green
-        case .string:
-            return .primary
-        case .binary:
-            return .gray
-        case .date, .timestamp:
-            return .orange
+
+    private func swiftUIColor(for colorType: ValueFormatters.ValueColor) -> Color {
+        switch colorType {
+        case .primary: return .primary
+        case .secondary: return .secondary
+        case .blue: return .blue
+        case .green: return .green
+        case .red: return .red
+        case .orange: return .orange
+        case .purple: return .purple
         }
     }
     

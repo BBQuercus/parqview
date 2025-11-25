@@ -4,14 +4,14 @@ public enum ParquetError: Error, LocalizedError {
     case failedToReadSchema
     case failedToReadData
     case dataReadError
-    case fileNotFound
-    case invalidFormat
+    case fileNotFound(String)
+    case invalidFormat(String)
     case pythonNotFound
     case pythonScriptError(String)
     case invalidResponse
     case invalidSchema
     case invalidMetadata
-    
+
     public var errorDescription: String? {
         switch self {
         case .failedToReadSchema:
@@ -20,20 +20,20 @@ public enum ParquetError: Error, LocalizedError {
             return "Failed to read Parquet file data"
         case .dataReadError:
             return "Failed to read data from Parquet file"
-        case .fileNotFound:
-            return "Parquet file not found"
-        case .invalidFormat:
-            return "Invalid Parquet file format"
+        case .fileNotFound(let path):
+            return "File not found: \(path)"
+        case .invalidFormat(let message):
+            return message
         case .pythonNotFound:
-            return "Python interpreter not found. Please ensure Python 3 is installed."
+            return "Python interpreter not found"
         case .pythonScriptError(let message):
-            return "Python script error: \(message)"
+            return "Script error: \(message)"
         case .invalidResponse:
-            return "Invalid response from Python script"
+            return "Invalid response from script"
         case .invalidSchema:
-            return "Invalid schema data returned"
+            return "Invalid schema data"
         case .invalidMetadata:
-            return "Invalid metadata returned"
+            return "Invalid metadata"
         }
     }
 }

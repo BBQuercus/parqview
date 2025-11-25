@@ -10,6 +10,13 @@ public class ParquetBridge {
     
     /// Cache for schema to avoid repeated C++ calls (C++ handles file caching internally)
     private var schemaCache: [URL: ParquetSchema] = [:]
+
+    /// Cached date formatter for performance
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
     
     private init() {
         // C++ components initialized on first use
@@ -64,7 +71,7 @@ public class ParquetBridge {
     
     private func convertArrowType(_ arrowType: String) -> ParquetType {
         let type = arrowType.lowercased()
-        
+
         // Handle Arrow C++ type strings
         if type.contains("bool") {
             return .boolean
@@ -87,10 +94,60 @@ public class ParquetBridge {
         } else if type.contains("timestamp") {
             return .timestamp
         } else if type.contains("decimal") {
-            return .double  // Treat decimal as double for now
+            return .decimal
         } else {
             return .string  // Default fallback
         }
+    }
+
+    private func convertValue(_ valueStr: String, to type: ParquetType) -> ParquetValue {
+        switch type {
+        case .boolean:
+            return .bool(valueStr.lowercased() == "true" || valueStr == "1")
+        case .int32, .int64, .int96:
+            if let intVal = Int64(valueStr) {
+                return .int(intVal)
+            }
+            // Try parsing as double first (handles scientific notation)
+            if let doubleVal = Double(valueStr), doubleVal.truncatingRemainder(dividingBy: 1) == 0 {
+                return .int(Int64(doubleVal))
+            }
+            return .string(valueStr)
+        case .float, .double, .decimal:
+            if let floatVal = Double(valueStr) {
+                return .float(floatVal)
+            }
+            return .string(valueStr)
+        case .date, .timestamp:
+            if let date = Self.isoFormatter.date(from: valueStr) {
+                return type == .date ? .date(date) : .timestamp(date)
+            }
+            // Try alternative date formats
+            if let date = parseFlexibleDate(valueStr) {
+                return type == .date ? .date(date) : .timestamp(date)
+            }
+            return .string(valueStr)
+        case .binary, .fixedLenByteArray:
+            if let data = Data(base64Encoded: valueStr) {
+                return .binary(data)
+            }
+            return .string(valueStr)
+        default:
+            return .string(valueStr)
+        }
+    }
+
+    private func parseFlexibleDate(_ str: String) -> Date? {
+        let formats = ["yyyy-MM-dd", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss"]
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        for format in formats {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: str) {
+                return date
+            }
+        }
+        return nil
     }
     
     // MARK: - Data Sampling
@@ -116,53 +173,36 @@ public class ParquetBridge {
         
         // Convert C data to Swift rows
         var rows: [ParquetRow] = []
-        
-        for rowIdx in 0..<Int(tableData.pointee.row_count) {
+        let rowCount = Int(tableData.pointee.row_count)
+        let colCount = Int(tableData.pointee.column_count)
+
+        for rowIdx in 0..<rowCount {
             var values: [ParquetValue] = []
-            
-            for colIdx in 0..<Int(tableData.pointee.column_count) {
-                // Get the string value from C array
-                let valuePtr = tableData.pointee.data[rowIdx]![colIdx]!
+
+            // Bounds check: ensure row pointer exists
+            guard let rowPtr = tableData.pointee.data[rowIdx] else {
+                continue
+            }
+
+            for colIdx in 0..<colCount {
+                // Bounds check: ensure column pointer exists
+                guard let valuePtr = rowPtr[colIdx] else {
+                    values.append(.null)
+                    continue
+                }
+
                 let valueStr = String(cString: valuePtr)
-                
+
                 // Convert based on schema type if available
                 let columnType = colIdx < schema.columns.count ? schema.columns[colIdx].type : .string
-                
-                if valueStr == "NULL" {
+
+                if valueStr == "NULL" || valueStr.isEmpty {
                     values.append(.null)
                 } else {
-                    switch columnType {
-                    case .boolean:
-                        values.append(.bool(valueStr == "true"))
-                    case .int32, .int64, .int96:
-                        if let intVal = Int64(valueStr) {
-                            values.append(.int(intVal))
-                        } else {
-                            values.append(.string(valueStr))
-                        }
-                    case .float, .double:
-                        if let floatVal = Double(valueStr) {
-                            values.append(.float(floatVal))
-                        } else {
-                            values.append(.string(valueStr))
-                        }
-                    case .string, .binary, .fixedLenByteArray:
-                        values.append(.string(valueStr))
-                    case .date, .timestamp:
-                        // Try to parse as date
-                        let formatter = ISO8601DateFormatter()
-                        if let date = formatter.date(from: valueStr) {
-                            values.append(.timestamp(date))
-                        } else {
-                            values.append(.string(valueStr))
-                        }
-                    default:
-                        // Handle all other types as strings
-                        values.append(.string(valueStr))
-                    }
+                    values.append(convertValue(valueStr, to: columnType))
                 }
             }
-            
+
             if !values.isEmpty {
                 rows.append(ParquetRow(values: values))
             }

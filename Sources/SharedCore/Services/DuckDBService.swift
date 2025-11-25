@@ -76,7 +76,7 @@ public class DuckDBService: ObservableObject {
         return rows
     }
 
-    /// Gets a filtered page of data - searches all string columns for the filter text
+    /// Gets a filtered page of data - searches all columns for the filter text
     /// Returns (rows, totalMatchingRows)
     public func getFilteredPage(filterText: String, offset: Int, limit: Int) async throws -> ([ParquetRow], Int) {
         guard let path = currentFilePath else {
@@ -84,24 +84,15 @@ public class DuckDBService: ObservableObject {
         }
 
         let url = URL(fileURLWithPath: path)
-
-        // Get schema to know which columns to search
-        let schema = try ParquetBridge.shared.readSchema(from: url)
-
-        // For now, use in-memory filtering since DuckDB isn't fully integrated
-        // This loads more data and filters it - not ideal for huge files but works
-        let searchText = filterText.lowercased()
-
-        // Load a larger batch for filtering (up to 10000 rows at a time)
-        let batchSize = 10000
-        var allMatchingRows: [ParquetRow] = []
-        var currentBatchOffset = 0
-        var totalScanned = 0
-
-        // Get total row count
         let totalRows = try ParquetBridge.shared.getRowCount(from: url)
 
-        // Scan through the file in batches
+        // For now, use in-memory filtering since DuckDB isn't fully integrated
+        // Load batches and filter - stops early once we have enough results
+        let batchSize = 5000
+        var allMatchingRows: [ParquetRow] = []
+        var currentBatchOffset = 0
+        let neededRows = offset + limit
+
         while currentBatchOffset < totalRows {
             let rows = try ParquetBridge.shared.readSampleRows(
                 from: url,
@@ -109,104 +100,34 @@ public class DuckDBService: ObservableObject {
                 offset: currentBatchOffset
             )
 
-            if rows.isEmpty {
-                break
-            }
+            if rows.isEmpty { break }
 
-            // Filter rows that contain the search text in any column
+            // Filter rows using shared utility
             let matchingRows = rows.filter { row in
-                for value in row.values {
-                    if valueContainsText(value, searchText: searchText) {
-                        return true
-                    }
-                }
-                return false
+                row.values.contains { ValueFormatters.valueContains($0, searchText: filterText) }
             }
 
             allMatchingRows.append(contentsOf: matchingRows)
             currentBatchOffset += rows.count
-            totalScanned += rows.count
 
-            // If we have enough matching rows, we can stop
-            // (offset + limit + some buffer for accurate count)
-            if allMatchingRows.count >= offset + limit + 1000 && currentBatchOffset >= totalRows / 2 {
-                // Continue to get accurate count but we have enough data
+            // Stop early if we have enough rows and scanned at least half the file
+            if allMatchingRows.count >= neededRows + 500 && currentBatchOffset >= totalRows / 2 {
+                break
             }
         }
 
-        let totalMatching = allMatchingRows.count
-
-        // Apply pagination to matching rows
+        // Apply pagination
         let startIndex = min(offset, allMatchingRows.count)
         let endIndex = min(offset + limit, allMatchingRows.count)
         let pageRows = Array(allMatchingRows[startIndex..<endIndex])
 
-        return (pageRows, totalMatching)
-    }
-
-    /// Check if a value contains the search text
-    private func valueContainsText(_ value: ParquetValue, searchText: String) -> Bool {
-        switch value {
-        case .null:
-            return "null".contains(searchText)
-        case .bool(let b):
-            return String(b).lowercased().contains(searchText)
-        case .int(let i):
-            return String(i).contains(searchText)
-        case .float(let f):
-            return String(f).contains(searchText)
-        case .string(let s):
-            return s.lowercased().contains(searchText)
-        case .binary:
-            return false
-        case .date(let d):
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            return formatter.string(from: d).lowercased().contains(searchText)
-        case .timestamp(let t):
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            formatter.timeStyle = .short
-            return formatter.string(from: t).lowercased().contains(searchText)
-        }
+        return (pageRows, allMatchingRows.count)
     }
     
     /// Executes a SQL statement without returning results
     private func execute(_ sql: String) async throws {
-        // TODO: Implement actual DuckDB execution
-        // This would be used for CREATE VIEW, etc.
-        
-        // Simulate async work
-        try await Task.sleep(nanoseconds: 50_000_000)
-    }
-    
-    /// Gets column statistics
-    public func getColumnStats(columnName: String) async throws -> ColumnStatistics {
-        let sql = """
-            SELECT 
-                COUNT(*) as count,
-                COUNT(DISTINCT \(columnName)) as distinct_count,
-                MIN(\(columnName)) as min_value,
-                MAX(\(columnName)) as max_value,
-                COUNT(*) - COUNT(\(columnName)) as null_count
-            FROM parquet
-        """
-        
-        // TODO: Execute and parse results
-        return ColumnStatistics(
-            count: 1000,
-            distinctCount: 100,
-            nullCount: 10,
-            minValue: "A",
-            maxValue: "Z"
-        )
-    }
-    
-    /// Exports data to CSV
-    public func exportToCSV(outputPath: URL, limit: Int? = nil) async throws {
-        // TODO: Implement CSV export when DuckDB is integrated
-        // For now, this is a placeholder
-        throw DuckDBError.queryFailed("Export not yet implemented")
+        // DuckDB integration pending - currently using ParquetBridge directly
+        try await Task.sleep(nanoseconds: 10_000_000)
     }
 }
 
