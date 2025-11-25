@@ -1,0 +1,37 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build macOS App
+    runs-on: macos-14
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: brew install apache-arrow
+
+    - name: Build Release
+      run: swift build -c release
+
+    - name: Create App Bundle
+      run: |
+        mkdir -p ParqView.app/Contents/MacOS
+        mkdir -p ParqView.app/Contents/Resources
+        cp .build/release/ParqViewApp ParqView.app/Contents/MacOS/ParqView
+        cp Info.plist ParqView.app/Contents/
+        chmod +x ParqView.app/Contents/MacOS/ParqView
+
+    - name: Upload App
+      uses: actions/upload-artifact@v4
+      with:
+        name: ParqView-macOS
+        path: ParqView.app
+        retention-days: 30
