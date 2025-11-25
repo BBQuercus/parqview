@@ -5,11 +5,10 @@ struct ImprovedMainView: View {
     @EnvironmentObject private var appState: AppState
     @State private var selectedColumns = Set<String>()
     @State private var filterText = ""
-    @State private var sortColumn: String? = nil
-    @State private var sortAscending = true
-    
+    @State private var activeFilter = ""
+    @State private var isSearching = false
+
     var body: some View {
-        let _ = print("🎨 ImprovedMainView rendering. currentFile: \(appState.currentFile != nil ? "EXISTS" : "nil"), isLoading: \(appState.isLoading), error: \(appState.errorMessage ?? "none")")
         Group {
             if let file = appState.currentFile {
                 GeometryReader { geometry in
@@ -21,37 +20,26 @@ struct ImprovedMainView: View {
                         )
                         .frame(width: 250)
                         .background(Color(NSColor.controlBackgroundColor))
-                        
+
                         Divider()
-                        
+
                         // Main content area
                         VStack(spacing: 0) {
                             // Header toolbar
                             HeaderToolbar(
                                 file: file,
                                 filterText: $filterText,
+                                activeFilter: $activeFilter,
+                                isSearching: $isSearching,
                                 onBack: {
                                     appState.currentFile = nil
                                 }
                             )
-                            
+
                             Divider()
-                            
-                            // Data table - Use optimized view for large files
-                            if file.totalRows > 500 {
-                                // Use simple paginated view for large files
-                                SimpleVirtualTableView(file: file, filterText: filterText)
-                            } else {
-                                // Use simple view for small files
-                                ImprovedTableView(
-                                    file: file,
-                                    selectedColumns: selectedColumns,
-                                    filterText: filterText,
-                                    sortColumn: sortColumn,
-                                    sortAscending: sortAscending,
-                                    onSort: handleSort
-                                )
-                            }
+
+                            // Data table with pagination
+                            SimpleVirtualTableView(file: file, filterText: activeFilter, isSearching: $isSearching)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -70,22 +58,13 @@ struct ImprovedMainView: View {
         .onChange(of: appState.currentFile?.id) { _ in
             // Reset state when file changes
             filterText = ""
-            sortColumn = nil
-            sortAscending = true
-            
+            activeFilter = ""
+            isSearching = false
+
             // Select all columns for the new file
             if let file = appState.currentFile {
                 selectedColumns = Set(file.schema.columns.map { $0.name })
             }
-        }
-    }
-    
-    private func handleSort(column: String) {
-        if sortColumn == column {
-            sortAscending.toggle()
-        } else {
-            sortColumn = column
-            sortAscending = true
         }
     }
 }
@@ -93,52 +72,98 @@ struct ImprovedMainView: View {
 struct HeaderToolbar: View {
     let file: ParquetFile
     @Binding var filterText: String
+    @Binding var activeFilter: String
+    @Binding var isSearching: Bool
     let onBack: () -> Void
     @FocusState private var isFilterFocused: Bool
-    
+
+    private var hasUnappliedChanges: Bool {
+        filterText != activeFilter
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Button(action: onBack) {
                 Label("Back", systemImage: "chevron.left")
             }
             .buttonStyle(.bordered)
-            
+
             Divider()
                 .frame(height: 20)
-            
+
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                
-                TextField("Filter data...", text: $filterText)
+                    .foregroundStyle(isSearching ? Color.accentColor : Color.secondary)
+
+                TextField("Filter data... (press Enter to search)", text: $filterText)
                     .textFieldStyle(.plain)
                     .focused($isFilterFocused)
                     .frame(width: 300)
-                
-                if !filterText.isEmpty {
-                    Button(action: {
-                        filterText = ""
-                        isFilterFocused = true
-                    }) {
+                    .onSubmit {
+                        performSearch()
+                    }
+
+                if isSearching {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .frame(width: 16, height: 16)
+                } else if !filterText.isEmpty {
+                    Button(action: clearSearch) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("Clear search")
                 }
+
+                Button(action: performSearch) {
+                    Text("Search")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(isSearching || !hasUnappliedChanges)
+                .help(hasUnappliedChanges ? "Press Enter or click to search" : "Search is up to date")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Color(NSColor.textBackgroundColor))
             .cornerRadius(6)
-            
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(hasUnappliedChanges && !isSearching ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+            )
+
             Spacer()
-            
+
+            if !activeFilter.isEmpty {
+                HStack(spacing: 4) {
+                    Text("Filtered")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .font(.caption)
+                }
+            }
+
             Text("\(file.totalRows) rows")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding()
         .background(Color(NSColor.windowBackgroundColor))
+    }
+
+    private func performSearch() {
+        guard !isSearching else { return }
+        activeFilter = filterText
+    }
+
+    private func clearSearch() {
+        filterText = ""
+        activeFilter = ""
+        isFilterFocused = true
     }
 }
 
@@ -228,312 +253,6 @@ struct ColumnCheckbox: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
-    }
-}
-
-struct ImprovedTableView: View {
-    let file: ParquetFile
-    let selectedColumns: Set<String>
-    let filterText: String
-    let sortColumn: String?
-    let sortAscending: Bool
-    let onSort: (String) -> Void
-    
-    @State private var allRows: [ParquetRow] = []
-    @State private var isLoading = true
-    
-    var visibleColumns: [SchemaColumn] {
-        file.schema.columns.filter { selectedColumns.contains($0.name) }
-    }
-    
-    var filteredRows: [ParquetRow] {
-        guard !filterText.isEmpty else { return sortedRows }
-        
-        let searchText = filterText.lowercased()
-        return sortedRows.filter { row in
-            for column in visibleColumns {
-                if let columnIndex = file.schema.columns.firstIndex(where: { $0.id == column.id }),
-                   columnIndex < row.values.count {
-                    if valueContainsText(row.values[columnIndex], searchText: searchText) {
-                        return true
-                    }
-                }
-            }
-            return false
-        }
-    }
-    
-    var sortedRows: [ParquetRow] {
-        guard let sortCol = sortColumn,
-              let columnIndex = file.schema.columns.firstIndex(where: { $0.name == sortCol }) else {
-            return allRows
-        }
-        
-        return allRows.sorted { row1, row2 in
-            guard columnIndex < row1.values.count && columnIndex < row2.values.count else {
-                return true
-            }
-            
-            let comparison = compareValues(row1.values[columnIndex], row2.values[columnIndex])
-            return sortAscending ? comparison : !comparison
-        }
-    }
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Row count toolbar
-            HStack {
-                Text("Showing \(filteredRows.isEmpty ? 0 : 1)-\(filteredRows.count) of \(file.totalRows) rows")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 6)
-            .background(Color(NSColor.controlBackgroundColor))
-            
-            Divider()
-            
-            Group {
-                if isLoading {
-                    ProgressView("Loading data...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if visibleColumns.isEmpty {
-                    Text("No columns selected")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView([.horizontal, .vertical]) {
-                    VStack(spacing: 0) {
-                        // Header
-                        HStack(spacing: 0) {
-                            // Row number header
-                            Text("#")
-                                .font(.system(size: 12, weight: .semibold))
-                                .frame(width: 50)
-                                .padding(.vertical, 8)
-                                .background(Color(NSColor.controlBackgroundColor))
-                            
-                            Divider()
-                            
-                            // Column headers
-                            ForEach(visibleColumns) { column in
-                                ColumnHeader(
-                                    column: column,
-                                    isSorted: sortColumn == column.name,
-                                    isAscending: sortAscending,
-                                    onTap: { onSort(column.name) }
-                                )
-                                
-                                Divider()
-                            }
-                        }
-                        
-                        Divider()
-                        
-                        // Data rows
-                        ForEach(Array(filteredRows.enumerated()), id: \.offset) { index, row in
-                            HStack(spacing: 0) {
-                                // Row number
-                                Text("\(index + 1)")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 50)
-                                    .padding(.vertical, 6)
-                                
-                                Divider()
-                                
-                                // Data cells
-                                ForEach(visibleColumns) { column in
-                                    if let columnIndex = file.schema.columns.firstIndex(where: { $0.id == column.id }),
-                                       columnIndex < row.values.count {
-                                        DataCell(value: row.values[columnIndex])
-                                    } else {
-                                        Text("")
-                                            .frame(minWidth: 100, maxWidth: 300, alignment: .leading)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 6)
-                                    }
-                                    
-                                    Divider()
-                                }
-                            }
-                            .background(index % 2 == 1 ? Color(NSColor.separatorColor).opacity(0.05) : Color.clear)
-                        }
-                    }
-                }
-                }
-            }
-        }
-        .background(Color(NSColor.textBackgroundColor))
-        .onAppear { loadData() }
-    }
-    
-    private func loadData() {
-        Task {
-            isLoading = true
-            do {
-                try await DuckDBService.shared.loadFile(at: file.url)
-                // Only load up to 500 rows for the simple view
-                let limit = min(500, file.totalRows)
-                let rows = try await DuckDBService.shared.getPage(offset: 0, limit: limit)
-                
-                await MainActor.run {
-                    self.allRows = rows
-                    self.isLoading = false
-                }
-            } catch {
-                print("Error loading data: \(error)")
-                // Try fallback
-                do {
-                    let limit = min(500, file.totalRows)
-                    let rows = try ParquetBridge.shared.readSampleRows(from: file.url, limit: limit)
-                    await MainActor.run {
-                        self.allRows = rows
-                        self.isLoading = false
-                    }
-                } catch {
-                    print("Fallback also failed: \(error)")
-                    await MainActor.run {
-                        self.isLoading = false
-                    }
-                }
-            }
-        }
-    }
-    
-    private func valueContainsText(_ value: ParquetValue, searchText: String) -> Bool {
-        switch value {
-        case .null:
-            return "null".contains(searchText)
-        case .bool(let b):
-            return String(b).lowercased().contains(searchText)
-        case .int(let i):
-            return String(i).lowercased().contains(searchText)
-        case .float(let f):
-            return String(f).lowercased().contains(searchText)
-        case .string(let s):
-            return s.lowercased().contains(searchText)
-        case .binary:
-            return false
-        case .date(let d):
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            return formatter.string(from: d).lowercased().contains(searchText)
-        case .timestamp(let t):
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            formatter.timeStyle = .short
-            return formatter.string(from: t).lowercased().contains(searchText)
-        }
-    }
-    
-    private func compareValues(_ v1: ParquetValue, _ v2: ParquetValue) -> Bool {
-        switch (v1, v2) {
-        case (.null, .null):
-            return true
-        case (.null, _):
-            return true
-        case (_, .null):
-            return false
-        case (.bool(let b1), .bool(let b2)):
-            return !b1 && b2
-        case (.int(let i1), .int(let i2)):
-            return i1 < i2
-        case (.float(let f1), .float(let f2)):
-            return f1 < f2
-        case (.string(let s1), .string(let s2)):
-            return s1 < s2
-        case (.date(let d1), .date(let d2)):
-            return d1 < d2
-        case (.timestamp(let t1), .timestamp(let t2)):
-            return t1 < t2
-        default:
-            return String(describing: v1) < String(describing: v2)
-        }
-    }
-}
-
-struct ColumnHeader: View {
-    let column: SchemaColumn
-    let isSorted: Bool
-    let isAscending: Bool
-    let onTap: () -> Void
-    
-    var body: some View {
-        Button(action: onTap) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(column.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                    
-                    Text(column.type.description)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                
-                Spacer()
-                
-                if isSorted {
-                    Image(systemName: isAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .frame(minWidth: 100, maxWidth: 300, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(isSorted ? Color.accentColor.opacity(0.1) : Color(NSColor.controlBackgroundColor))
-        .onHover { hovering in
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
-    }
-}
-
-struct DataCell: View {
-    let value: ParquetValue
-    
-    var body: some View {
-        Text(displayText)
-            .font(.system(size: 12))
-            .lineLimit(1)
-            .frame(minWidth: 100, maxWidth: 300, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-    }
-    
-    var displayText: String {
-        switch value {
-        case .null:
-            return "NULL"
-        case .bool(let b):
-            return String(b)
-        case .int(let i):
-            return String(i)
-        case .float(let f):
-            return String(format: "%.2f", f)
-        case .string(let s):
-            return s
-        case .binary:
-            return "[Binary]"
-        case .date(let d):
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            return formatter.string(from: d)
-        case .timestamp(let t):
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            formatter.timeStyle = .short
-            return formatter.string(from: t)
-        }
     }
 }
 

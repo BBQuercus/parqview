@@ -5,13 +5,13 @@ import SharedCore
 struct SimpleVirtualTableView: View {
     let file: ParquetFile
     let filterText: String
+    @Binding var isSearching: Bool
 
+    @AppStorage("rowsPerPage") private var rowsPerPage = 50
     @State private var visibleRows: [ParquetRow] = []
     @State private var isLoading = false
     @State private var currentOffset = 0
     @State private var filteredTotalRows: Int = 0
-
-    private let pageSize = 50
     private let rowHeight: CGFloat = 24
     private let columnWidth: CGFloat = 120
     private let rowNumberWidth: CGFloat = 50
@@ -41,61 +41,94 @@ struct SimpleVirtualTableView: View {
 
             // Synchronized scrolling for header and data
             GeometryReader { geometry in
-                ScrollView([.horizontal, .vertical]) {
-                    VStack(spacing: 0) {
-                        // Column headers - pinned at top
-                        HStack(spacing: 0) {
-                            Text("#")
-                                .font(.system(size: 10, weight: .semibold))
-                                .frame(width: rowNumberWidth, height: rowHeight)
-                                .background(Color(NSColor.controlBackgroundColor))
+                ZStack {
+                    ScrollView([.horizontal, .vertical]) {
+                        VStack(spacing: 0) {
+                            // Column headers - pinned at top
+                            HStack(spacing: 0) {
+                                Text("#")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .frame(width: rowNumberWidth, height: rowHeight)
+                                    .background(Color(NSColor.controlBackgroundColor))
 
-                            ForEach(file.schema.columns) { column in
-                                HStack(spacing: 4) {
-                                    Text(column.name)
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .lineLimit(1)
-                                    Text("(\(column.type.shortDescription))")
-                                        .font(.system(size: 9))
-                                        .foregroundColor(.secondary)
+                                ForEach(file.schema.columns) { column in
+                                    HStack(spacing: 4) {
+                                        Text(column.name)
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .lineLimit(1)
+                                        Text("(\(column.type.shortDescription))")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .frame(width: columnWidth, height: rowHeight, alignment: .leading)
+                                    .padding(.horizontal, 6)
+                                    .background(Color(NSColor.controlBackgroundColor))
                                 }
-                                .frame(width: columnWidth, height: rowHeight, alignment: .leading)
-                                .padding(.horizontal, 6)
-                                .background(Color(NSColor.controlBackgroundColor))
                             }
-                        }
 
-                        Divider()
+                            Divider()
 
-                        // Data rows
-                        if visibleRows.isEmpty && !isLoading {
-                            Text("No data")
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, minHeight: 100)
-                        } else if isLoading && visibleRows.isEmpty {
-                            ProgressView("Loading...")
-                                .frame(maxWidth: .infinity, minHeight: 100)
-                        } else {
-                            ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
-                                HStack(spacing: 0) {
-                                    // Row number
-                                    Text("\(currentOffset + index + 1)")
-                                        .font(.system(size: 10).monospacedDigit())
+                            // Data rows
+                            if visibleRows.isEmpty && !isLoading {
+                                VStack(spacing: 8) {
+                                    Image(systemName: filterText.isEmpty ? "doc.text" : "magnifyingglass")
+                                        .font(.system(size: 32))
                                         .foregroundColor(.secondary)
-                                        .frame(width: rowNumberWidth, height: rowHeight)
-
-                                    // Data cells
-                                    ForEach(Array(row.values.enumerated()), id: \.offset) { colIndex, value in
-                                        if colIndex < file.schema.columns.count {
-                                            cellView(for: value)
-                                                .frame(width: columnWidth, height: rowHeight, alignment: .leading)
-                                                .padding(.horizontal, 6)
-                                        }
+                                    Text(filterText.isEmpty ? "No data" : "No matching results")
+                                        .foregroundColor(.secondary)
+                                    if !filterText.isEmpty {
+                                        Text("Try a different search term")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary.opacity(0.8))
                                     }
                                 }
-                                .background(index % 2 == 0 ? Color.clear : Color(NSColor.separatorColor).opacity(0.08))
+                                .frame(maxWidth: .infinity, minHeight: 150)
+                            } else if isLoading && visibleRows.isEmpty {
+                                VStack(spacing: 12) {
+                                    ProgressView()
+                                        .scaleEffect(1.2)
+                                    Text(filterText.isEmpty ? "Loading data..." : "Searching...")
+                                        .font(.headline)
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 150)
+                            } else {
+                                ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
+                                    HStack(spacing: 0) {
+                                        // Row number
+                                        Text("\(currentOffset + index + 1)")
+                                            .font(.system(size: 10).monospacedDigit())
+                                            .foregroundColor(.secondary)
+                                            .frame(width: rowNumberWidth, height: rowHeight)
+
+                                        // Data cells
+                                        ForEach(Array(row.values.enumerated()), id: \.offset) { colIndex, value in
+                                            if colIndex < file.schema.columns.count {
+                                                cellView(for: value)
+                                                    .frame(width: columnWidth, height: rowHeight, alignment: .leading)
+                                                    .padding(.horizontal, 6)
+                                            }
+                                        }
+                                    }
+                                    .background(index % 2 == 0 ? Color.clear : Color(NSColor.separatorColor).opacity(0.08))
+                                }
                             }
                         }
+                    }
+                    .opacity(isLoading && !visibleRows.isEmpty ? 0.5 : 1.0)
+
+                    // Loading overlay when searching with existing data
+                    if isLoading && !visibleRows.isEmpty {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                            Text("Searching...")
+                                .font(.headline)
+                        }
+                        .padding(24)
+                        .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
+                        .cornerRadius(12)
+                        .shadow(radius: 4)
                     }
                 }
             }
@@ -126,7 +159,7 @@ struct SimpleVirtualTableView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(currentOffset + pageSize >= totalRows || isLoading)
+                .disabled(currentOffset + rowsPerPage >= totalRows || isLoading)
 
                 if isLoading {
                     ProgressView()
@@ -138,13 +171,17 @@ struct SimpleVirtualTableView: View {
             .padding(.vertical, 8)
             .background(Color(NSColor.controlBackgroundColor))
         }
-        .onAppear {
-            filteredTotalRows = file.totalRows
-            loadData()
-        }
-        .onChange(of: filterText) { _ in
+        .task(id: filterText) {
+            // Reset offset when filter changes
             currentOffset = 0
-            loadData()
+            filteredTotalRows = file.totalRows
+            await loadPage(offset: 0)
+        }
+        .onChange(of: rowsPerPage) { _ in
+            currentOffset = 0
+            Task {
+                await loadPage(offset: 0)
+            }
         }
     }
 
@@ -172,23 +209,17 @@ struct SimpleVirtualTableView: View {
         }
     }
     
-    private func loadData() {
-        Task {
-            await loadPage(offset: currentOffset)
-        }
-    }
-
     private func loadNextPage() {
         let totalRows = filterText.isEmpty ? file.totalRows : filteredTotalRows
         Task {
-            let newOffset = min(currentOffset + pageSize, max(0, totalRows - pageSize))
+            let newOffset = min(currentOffset + rowsPerPage, max(0, totalRows - rowsPerPage))
             await loadPage(offset: newOffset)
         }
     }
 
     private func loadPreviousPage() {
         Task {
-            let newOffset = max(0, currentOffset - pageSize)
+            let newOffset = max(0, currentOffset - rowsPerPage)
             await loadPage(offset: newOffset)
         }
     }
@@ -198,6 +229,12 @@ struct SimpleVirtualTableView: View {
         guard !isLoading else { return }
 
         isLoading = true
+        isSearching = true
+
+        defer {
+            isLoading = false
+            isSearching = false
+        }
 
         do {
             // Use DuckDB for filtered queries
@@ -207,7 +244,7 @@ struct SimpleVirtualTableView: View {
                 // No filter - simple pagination
                 let rows = try await DuckDBService.shared.getPage(
                     offset: offset,
-                    limit: pageSize
+                    limit: rowsPerPage
                 )
                 visibleRows = rows
                 currentOffset = offset
@@ -217,7 +254,7 @@ struct SimpleVirtualTableView: View {
                 let (rows, totalCount) = try await DuckDBService.shared.getFilteredPage(
                     filterText: filterText,
                     offset: offset,
-                    limit: pageSize
+                    limit: rowsPerPage
                 )
                 visibleRows = rows
                 currentOffset = offset
@@ -229,7 +266,7 @@ struct SimpleVirtualTableView: View {
             do {
                 let rows = try ParquetBridge.shared.readSampleRows(
                     from: file.url,
-                    limit: pageSize,
+                    limit: rowsPerPage,
                     offset: offset
                 )
                 visibleRows = rows
@@ -239,7 +276,5 @@ struct SimpleVirtualTableView: View {
                 print("Fallback also failed: \(error)")
             }
         }
-
-        isLoading = false
     }
 }
