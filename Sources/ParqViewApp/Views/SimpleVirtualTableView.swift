@@ -14,7 +14,10 @@ struct SimpleVirtualTableView: View {
     @State private var currentOffset = 0
     @State private var filteredTotalRows: Int = 0
     @State private var columnWidths: [String: CGFloat] = [:]
+    @State private var sortColumn: String? = nil
+    @State private var sortAscending: Bool = true
     private let rowHeight: CGFloat = 24
+    private let maxRowsForSorting = 100_000  // Limit sorting to avoid memory issues
     private let defaultColumnWidth: CGFloat = 120
     private let minColumnWidth: CGFloat = 60
     private let maxColumnWidth: CGFloat = 500
@@ -23,6 +26,11 @@ struct SimpleVirtualTableView: View {
     /// Columns to display based on selection
     private var visibleColumns: [SchemaColumn] {
         file.schema.columns.filter { selectedColumns.contains($0.name) }
+    }
+
+    /// Check if sorting is allowed (disabled for large files to prevent memory issues)
+    private var canSort: Bool {
+        file.totalRows <= maxRowsForSorting
     }
 
     /// Get width for a column (from state or default)
@@ -106,18 +114,43 @@ struct SimpleVirtualTableView: View {
                                         .background(Color(NSColor.controlBackgroundColor))
 
                                     ForEach(visibleColumns) { column in
-                                        // Column header
-                                        HStack(spacing: 4) {
+                                        // Column header with sort button
+                                        HStack(spacing: 2) {
                                             Text(column.name)
                                                 .font(.system(size: 10, weight: .semibold))
                                                 .lineLimit(1)
                                             Text("(\(column.type.shortDescription))")
                                                 .font(.system(size: 9))
                                                 .foregroundColor(.secondary)
+
+                                            Spacer(minLength: 2)
+
+                                            // Sort button
+                                            Button(action: {
+                                                if canSort {
+                                                    toggleSort(for: column.name)
+                                                }
+                                            }) {
+                                                Image(systemName: sortIcon(for: column.name))
+                                                    .font(.system(size: 9))
+                                                    .foregroundColor(
+                                                        !canSort ? .secondary.opacity(0.2) :
+                                                        sortColumn == column.name ? .accentColor : .secondary.opacity(0.5)
+                                                    )
+                                            }
+                                            .buttonStyle(.plain)
+                                            .disabled(!canSort)
+                                            .help(!canSort
+                                                ? "Sorting disabled for files > \(maxRowsForSorting / 1000)k rows"
+                                                : sortColumn == column.name
+                                                    ? (sortAscending ? "Sorted ascending - click for descending" : "Sorted descending - click to clear")
+                                                    : "Sort by \(column.name)")
                                         }
                                         .frame(width: columnWidth(for: column.name), height: rowHeight, alignment: .leading)
                                         .padding(.horizontal, 6)
-                                        .background(Color(NSColor.controlBackgroundColor))
+                                        .background(sortColumn == column.name
+                                            ? Color.accentColor.opacity(0.1)
+                                            : Color(NSColor.controlBackgroundColor))
 
                                         // Resize handle between columns
                                         ColumnResizeHandle(
@@ -285,6 +318,37 @@ struct SimpleVirtualTableView: View {
         case .purple: return .purple
         }
     }
+
+    /// Get the sort icon for a column
+    private func sortIcon(for columnName: String) -> String {
+        if sortColumn == columnName {
+            return sortAscending ? "chevron.up" : "chevron.down"
+        }
+        return "chevron.up.chevron.down"
+    }
+
+    /// Toggle sorting for a column
+    private func toggleSort(for columnName: String) {
+        if sortColumn == columnName {
+            if sortAscending {
+                // Currently ascending, switch to descending
+                sortAscending = false
+            } else {
+                // Currently descending, clear sort
+                sortColumn = nil
+                sortAscending = true
+            }
+        } else {
+            // New column, sort ascending
+            sortColumn = columnName
+            sortAscending = true
+        }
+        // Reload data with new sort
+        currentOffset = 0
+        Task {
+            await loadPage(offset: 0)
+        }
+    }
     
     private func loadNextPage() {
         let totalRows = filterText.isEmpty ? file.totalRows : filteredTotalRows
@@ -318,10 +382,12 @@ struct SimpleVirtualTableView: View {
             try await DuckDBService.shared.loadFile(at: file.url)
 
             if filterText.isEmpty {
-                // No filter - simple pagination
+                // No filter - simple pagination with optional sorting
                 let rows = try await DuckDBService.shared.getPage(
                     offset: offset,
-                    limit: rowsPerPage
+                    limit: rowsPerPage,
+                    sortBy: sortColumn,
+                    ascending: sortAscending
                 )
                 visibleRows = rows
                 currentOffset = offset

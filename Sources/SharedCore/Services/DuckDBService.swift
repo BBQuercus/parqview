@@ -67,13 +67,64 @@ public class DuckDBService: ObservableObject {
 
         let url = URL(fileURLWithPath: path)
 
-        // Read the data using ParquetBridge with offset support
+        // If sorting, we need to load all data, sort, then paginate
+        if let sortColumn = sortBy {
+            let schema = try ParquetBridge.shared.readSchema(from: url)
+            guard let columnIndex = schema.columns.firstIndex(where: { $0.name == sortColumn }) else {
+                // Column not found, return unsorted
+                return try ParquetBridge.shared.readSampleRows(from: url, limit: limit, offset: offset)
+            }
+
+            // Load all rows for sorting (this is inefficient but works until DuckDB is integrated)
+            let totalRows = try ParquetBridge.shared.getRowCount(from: url)
+            let allRows = try ParquetBridge.shared.readSampleRows(from: url, limit: totalRows, offset: 0)
+
+            // Sort the rows
+            let sortedRows = allRows.sorted { row1, row2 in
+                guard columnIndex < row1.values.count && columnIndex < row2.values.count else {
+                    return false
+                }
+                let cmp = compareParquetValues(row1.values[columnIndex], row2.values[columnIndex])
+                return ascending ? cmp < 0 : cmp > 0
+            }
+
+            // Apply pagination
+            let startIndex = min(offset, sortedRows.count)
+            let endIndex = min(offset + limit, sortedRows.count)
+            return Array(sortedRows[startIndex..<endIndex])
+        }
+
+        // No sorting - simple pagination
         let rows = try ParquetBridge.shared.readSampleRows(from: url, limit: limit, offset: offset)
-
-        // TODO: Implement proper pagination with offset when DuckDB is integrated
-        // TODO: Implement sorting when DuckDB is integrated
-
         return rows
+    }
+
+    /// Compare two ParquetValues for sorting
+    private func compareParquetValues(_ lhs: ParquetValue, _ rhs: ParquetValue) -> Int {
+        switch (lhs, rhs) {
+        case (.null, .null): return 0
+        case (.null, _): return -1  // nulls first
+        case (_, .null): return 1
+        case (.bool(let a), .bool(let b)):
+            return a == b ? 0 : (a ? 1 : -1)
+        case (.int(let a), .int(let b)):
+            return a < b ? -1 : (a > b ? 1 : 0)
+        case (.float(let a), .float(let b)):
+            return a < b ? -1 : (a > b ? 1 : 0)
+        case (.string(let a), .string(let b)):
+            return a.localizedCompare(b).rawValue
+        case (.date(let a), .date(let b)):
+            return a < b ? -1 : (a > b ? 1 : 0)
+        case (.timestamp(let a), .timestamp(let b)):
+            return a < b ? -1 : (a > b ? 1 : 0)
+        case (.binary(let a), .binary(let b)):
+            return a.count < b.count ? -1 : (a.count > b.count ? 1 : 0)
+        default:
+            // Different types - compare string representations
+            let strA = String(describing: lhs)
+            let strB = String(describing: rhs)
+            return strA.localizedCompare(strB).rawValue
+        }
     }
 
     /// Gets a filtered page of data - searches all columns for the filter text
