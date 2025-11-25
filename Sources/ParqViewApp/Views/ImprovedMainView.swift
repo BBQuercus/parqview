@@ -168,6 +168,7 @@ struct HeaderToolbar: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .fixedSize()
                 .disabled(isSearching || !hasUnappliedChanges)
                 .help(hasUnappliedChanges ? "Press Enter or click to search" : "Search is up to date")
             }

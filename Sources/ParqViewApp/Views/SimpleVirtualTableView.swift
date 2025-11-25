@@ -8,7 +8,7 @@ struct SimpleVirtualTableView: View {
     @Binding var isSearching: Bool
     let selectedColumns: Set<String>
 
-    @AppStorage("rowsPerPage") private var rowsPerPage = 50
+    @AppStorage("rowsPerPage") private var rowsPerPage = 25
     @State private var visibleRows: [ParquetRow] = []
     @State private var isLoading = false
     @State private var currentOffset = 0
@@ -70,27 +70,6 @@ struct SimpleVirtualTableView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // File header
-            HStack {
-                Text("\(file.url.lastPathComponent)")
-                    .font(.system(size: 12, weight: .medium))
-                Spacer()
-                if filteredTotalRows != file.totalRows && !filterText.isEmpty {
-                    Text("\(filteredTotalRows) of \(file.totalRows) rows (filtered)")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("\(file.totalRows) rows")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color(NSColor.controlBackgroundColor))
-
-            Divider()
-
             // Synchronized scrolling for header and data
             GeometryReader { geometry in
                 ZStack {
