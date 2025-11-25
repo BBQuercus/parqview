@@ -39,7 +39,7 @@ struct ImprovedMainView: View {
                             Divider()
 
                             // Data table with pagination
-                            SimpleVirtualTableView(file: file, filterText: activeFilter, isSearching: $isSearching)
+                            SimpleVirtualTableView(file: file, filterText: activeFilter, isSearching: $isSearching, selectedColumns: selectedColumns)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -170,7 +170,18 @@ struct HeaderToolbar: View {
 struct SchemaSidebar: View {
     let schema: ParquetSchema
     @Binding var selectedColumns: Set<String>
-    
+    @State private var searchText = ""
+
+    private var filteredColumns: [SchemaColumn] {
+        if searchText.isEmpty {
+            return schema.columns
+        }
+        return schema.columns.filter { column in
+            column.name.localizedCaseInsensitiveContains(searchText) ||
+            column.type.description.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
@@ -178,48 +189,111 @@ struct SchemaSidebar: View {
                 Text("Schema")
                     .font(.headline)
                 Spacer()
-                Button(action: toggleAll) {
-                    Image(systemName: allSelected ? "checkmark.square.fill" : "square")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
+                Text("\(selectedColumns.count)/\(schema.columns.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .padding()
-            
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            // Search field
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                TextField("Search columns...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(6)
+            .background(Color(NSColor.textBackgroundColor))
+            .cornerRadius(6)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            // All/None buttons
+            HStack(spacing: 8) {
+                Button(action: selectAll) {
+                    Text("All")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(allSelected)
+
+                Button(action: selectNone) {
+                    Text("None")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(noneSelected)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
             Divider()
-            
+
             // Column list
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(schema.columns) { column in
-                        ColumnCheckbox(
-                            column: column,
-                            isSelected: selectedColumns.contains(column.name),
-                            onToggle: {
-                                if selectedColumns.contains(column.name) {
-                                    selectedColumns.remove(column.name)
-                                } else {
-                                    selectedColumns.insert(column.name)
+                    if filteredColumns.isEmpty && !searchText.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 24))
+                                .foregroundStyle(.tertiary)
+                            Text("No matching columns")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                    } else {
+                        ForEach(filteredColumns) { column in
+                            ColumnCheckbox(
+                                column: column,
+                                isSelected: selectedColumns.contains(column.name),
+                                onToggle: {
+                                    if selectedColumns.contains(column.name) {
+                                        selectedColumns.remove(column.name)
+                                    } else {
+                                        selectedColumns.insert(column.name)
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
                 .padding(.vertical, 8)
             }
         }
     }
-    
+
     private var allSelected: Bool {
         selectedColumns.count == schema.columns.count
     }
-    
-    private func toggleAll() {
-        if allSelected {
-            selectedColumns.removeAll()
-        } else {
-            selectedColumns = Set(schema.columns.map { $0.name })
-        }
+
+    private var noneSelected: Bool {
+        selectedColumns.isEmpty
+    }
+
+    private func selectAll() {
+        selectedColumns = Set(schema.columns.map { $0.name })
+    }
+
+    private func selectNone() {
+        selectedColumns.removeAll()
     }
 }
 

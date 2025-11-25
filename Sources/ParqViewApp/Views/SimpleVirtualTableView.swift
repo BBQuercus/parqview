@@ -6,15 +6,54 @@ struct SimpleVirtualTableView: View {
     let file: ParquetFile
     let filterText: String
     @Binding var isSearching: Bool
+    let selectedColumns: Set<String>
 
     @AppStorage("rowsPerPage") private var rowsPerPage = 50
     @State private var visibleRows: [ParquetRow] = []
     @State private var isLoading = false
     @State private var currentOffset = 0
     @State private var filteredTotalRows: Int = 0
+    @State private var columnWidths: [String: CGFloat] = [:]
     private let rowHeight: CGFloat = 24
-    private let columnWidth: CGFloat = 120
+    private let defaultColumnWidth: CGFloat = 120
+    private let minColumnWidth: CGFloat = 60
+    private let maxColumnWidth: CGFloat = 500
     private let rowNumberWidth: CGFloat = 50
+
+    /// Columns to display based on selection
+    private var visibleColumns: [SchemaColumn] {
+        file.schema.columns.filter { selectedColumns.contains($0.name) }
+    }
+
+    /// Get width for a column (from state or default)
+    private func columnWidth(for name: String) -> CGFloat {
+        columnWidths[name] ?? defaultColumnWidth
+    }
+
+    /// Calculate optimal width for a column based on content
+    private func calculateOptimalWidth(for column: SchemaColumn) -> CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        let headerFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        let padding: CGFloat = 24 // horizontal padding (6 * 2) + some buffer
+
+        // Measure header text
+        let headerText = "\(column.name) (\(column.type.shortDescription))"
+        var maxWidth = measureTextWidth(headerText, font: headerFont) + padding
+
+        // Measure content in visible rows
+        if let colIndex = file.schema.columns.firstIndex(where: { $0.name == column.name }) {
+            for row in visibleRows {
+                if colIndex < row.values.count {
+                    let displayText = ValueFormatters.displayString(for: row.values[colIndex])
+                    let textWidth = measureTextWidth(displayText, font: font) + padding
+                    maxWidth = max(maxWidth, textWidth)
+                }
+            }
+        }
+
+        // Clamp to min/max
+        return min(max(maxWidth, minColumnWidth), maxColumnWidth)
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -42,80 +81,118 @@ struct SimpleVirtualTableView: View {
             // Synchronized scrolling for header and data
             GeometryReader { geometry in
                 ZStack {
-                    ScrollView([.horizontal, .vertical]) {
-                        VStack(spacing: 0) {
-                            // Column headers - pinned at top
-                            HStack(spacing: 0) {
-                                Text("#")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .frame(width: rowNumberWidth, height: rowHeight)
-                                    .background(Color(NSColor.controlBackgroundColor))
+                    if visibleColumns.isEmpty {
+                        // No columns selected
+                        VStack(spacing: 12) {
+                            Image(systemName: "square.dashed")
+                                .font(.system(size: 48))
+                                .foregroundColor(.secondary)
+                            Text("No columns selected")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                            Text("Select columns from the sidebar to view data")
+                                .font(.caption)
+                                .foregroundColor(.secondary.opacity(0.8))
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView([.horizontal, .vertical]) {
+                            VStack(spacing: 0) {
+                                // Column headers - pinned at top
+                                HStack(spacing: 0) {
+                                    Text("#")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .frame(width: rowNumberWidth, height: rowHeight)
+                                        .background(Color(NSColor.controlBackgroundColor))
 
-                                ForEach(file.schema.columns) { column in
-                                    HStack(spacing: 4) {
-                                        Text(column.name)
-                                            .font(.system(size: 10, weight: .semibold))
-                                            .lineLimit(1)
-                                        Text("(\(column.type.shortDescription))")
-                                            .font(.system(size: 9))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .frame(width: columnWidth, height: rowHeight, alignment: .leading)
-                                    .padding(.horizontal, 6)
-                                    .background(Color(NSColor.controlBackgroundColor))
-                                }
-                            }
+                                    ForEach(visibleColumns) { column in
+                                        // Column header
+                                        HStack(spacing: 4) {
+                                            Text(column.name)
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .lineLimit(1)
+                                            Text("(\(column.type.shortDescription))")
+                                                .font(.system(size: 9))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .frame(width: columnWidth(for: column.name), height: rowHeight, alignment: .leading)
+                                        .padding(.horizontal, 6)
+                                        .background(Color(NSColor.controlBackgroundColor))
 
-                            Divider()
-
-                            // Data rows
-                            if visibleRows.isEmpty && !isLoading {
-                                VStack(spacing: 8) {
-                                    Image(systemName: filterText.isEmpty ? "doc.text" : "magnifyingglass")
-                                        .font(.system(size: 32))
-                                        .foregroundColor(.secondary)
-                                    Text(filterText.isEmpty ? "No data" : "No matching results")
-                                        .foregroundColor(.secondary)
-                                    if !filterText.isEmpty {
-                                        Text("Try a different search term")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary.opacity(0.8))
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 150)
-                            } else if isLoading && visibleRows.isEmpty {
-                                VStack(spacing: 12) {
-                                    ProgressView()
-                                        .scaleEffect(1.2)
-                                    Text(filterText.isEmpty ? "Loading data..." : "Searching...")
-                                        .font(.headline)
-                                        .foregroundColor(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 150)
-                            } else {
-                                ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
-                                    HStack(spacing: 0) {
-                                        // Row number
-                                        Text("\(currentOffset + index + 1)")
-                                            .font(.system(size: 10).monospacedDigit())
-                                            .foregroundColor(.secondary)
-                                            .frame(width: rowNumberWidth, height: rowHeight)
-
-                                        // Data cells
-                                        ForEach(Array(row.values.enumerated()), id: \.offset) { colIndex, value in
-                                            if colIndex < file.schema.columns.count {
-                                                cellView(for: value)
-                                                    .frame(width: columnWidth, height: rowHeight, alignment: .leading)
-                                                    .padding(.horizontal, 6)
+                                        // Resize handle between columns
+                                        ColumnResizeHandle(
+                                            columnName: column.name,
+                                            columnWidths: $columnWidths,
+                                            defaultWidth: defaultColumnWidth,
+                                            minWidth: minColumnWidth,
+                                            maxWidth: maxColumnWidth,
+                                            onAutoSize: {
+                                                columnWidths[column.name] = calculateOptimalWidth(for: column)
                                             }
+                                        )
+                                        .frame(height: rowHeight)
+                                        .background(Color(NSColor.controlBackgroundColor))
+                                    }
+                                }
+
+                                Divider()
+
+                                // Data rows
+                                if visibleRows.isEmpty && !isLoading {
+                                    VStack(spacing: 8) {
+                                        Image(systemName: filterText.isEmpty ? "doc.text" : "magnifyingglass")
+                                            .font(.system(size: 32))
+                                            .foregroundColor(.secondary)
+                                        Text(filterText.isEmpty ? "No data" : "No matching results")
+                                            .foregroundColor(.secondary)
+                                        if !filterText.isEmpty {
+                                            Text("Try a different search term")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary.opacity(0.8))
                                         }
                                     }
-                                    .background(index % 2 == 0 ? Color.clear : Color(NSColor.separatorColor).opacity(0.08))
+                                    .frame(maxWidth: .infinity, minHeight: 150)
+                                } else if isLoading && visibleRows.isEmpty {
+                                    VStack(spacing: 12) {
+                                        ProgressView()
+                                            .scaleEffect(1.2)
+                                        Text(filterText.isEmpty ? "Loading data..." : "Searching...")
+                                            .font(.headline)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: 150)
+                                } else {
+                                    ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
+                                        HStack(spacing: 0) {
+                                            // Row number
+                                            Text("\(currentOffset + index + 1)")
+                                                .font(.system(size: 10).monospacedDigit())
+                                                .foregroundColor(.secondary)
+                                                .frame(width: rowNumberWidth, height: rowHeight)
+
+                                            // Data cells - only for visible columns
+                                            ForEach(visibleColumns) { column in
+                                                if let colIndex = file.schema.columns.firstIndex(where: { $0.name == column.name }),
+                                                   colIndex < row.values.count {
+                                                    cellView(for: row.values[colIndex])
+                                                        .frame(width: columnWidth(for: column.name), height: rowHeight, alignment: .leading)
+                                                        .padding(.horizontal, 6)
+
+                                                    // Divider line matching header
+                                                    Rectangle()
+                                                        .fill(Color.gray.opacity(0.3))
+                                                        .frame(width: 1, height: rowHeight)
+                                                        .padding(.horizontal, 3.5)
+                                                }
+                                            }
+                                        }
+                                        .background(index % 2 == 0 ? Color.clear : Color(NSColor.separatorColor).opacity(0.08))
+                                    }
                                 }
                             }
                         }
+                        .opacity(isLoading && !visibleRows.isEmpty ? 0.5 : 1.0)
                     }
-                    .opacity(isLoading && !visibleRows.isEmpty ? 0.5 : 1.0)
 
                     // Loading overlay when searching with existing data
                     if isLoading && !visibleRows.isEmpty {
@@ -277,4 +354,88 @@ struct SimpleVirtualTableView: View {
             }
         }
     }
+}
+
+/// A draggable divider for resizing columns
+struct ColumnResizeHandle: View {
+    let columnName: String
+    @Binding var columnWidths: [String: CGFloat]
+    let defaultWidth: CGFloat
+    let minWidth: CGFloat
+    let maxWidth: CGFloat
+    let onAutoSize: () -> Void
+
+    @State private var isHovering = false
+    @State private var isDragging = false
+    @State private var dragOffset: CGFloat = 0
+    @State private var startWidth: CGFloat = 0
+
+    private var currentWidth: CGFloat {
+        columnWidths[columnName] ?? defaultWidth
+    }
+
+    var body: some View {
+        ZStack {
+            // Visible divider line
+            Rectangle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(width: 1)
+
+            // Wider hit area for easier grabbing
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 8)
+                .contentShape(Rectangle())
+        }
+        .overlay(
+            // Highlight on hover/drag - offset during drag to show preview
+            Rectangle()
+                .fill(Color.accentColor)
+                .frame(width: 3)
+                .opacity(isHovering || isDragging ? 1 : 0)
+                .offset(x: isDragging ? dragOffset : 0)
+        )
+        .frame(width: 8)
+        .onTapGesture(count: 2) {
+            // Double-click to auto-size
+            onAutoSize()
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if !isDragging {
+                        startWidth = currentWidth
+                        isDragging = true
+                    }
+                    // Calculate clamped offset for preview
+                    let newWidth = startWidth + value.translation.width
+                    let clampedWidth = min(max(newWidth, minWidth), maxWidth)
+                    dragOffset = clampedWidth - startWidth
+                }
+                .onEnded { value in
+                    // Only update the actual width on drag end
+                    let newWidth = startWidth + value.translation.width
+                    let clampedWidth = min(max(newWidth, minWidth), maxWidth)
+                    columnWidths[columnName] = clampedWidth
+                    isDragging = false
+                    dragOffset = 0
+                    startWidth = 0
+                }
+        )
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering {
+                NSCursor.resizeLeftRight.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+}
+
+/// Helper to measure text width
+func measureTextWidth(_ text: String, font: NSFont) -> CGFloat {
+    let attributes: [NSAttributedString.Key: Any] = [.font: font]
+    let size = (text as NSString).size(withAttributes: attributes)
+    return size.width
 }
